@@ -87,17 +87,32 @@ secrets: scanners ## scan the history and the working tree for secrets with gitl
 	@echo "TruffleHog: working tree..."
 	@$(CONTAINER) run --rm -v "$(CURDIR)":/repo:ro $(TRUFFLEHOG_IMAGE) filesystem /repo --exclude-paths=/repo/.trufflehog-exclude --results=verified,unknown --fail --no-update
 
+# ACCEPTED_VULNS are the module-level findings that do not fail "make vuln":
+# each is explained under "Known Vulnerabilities" in the README
+ACCEPTED_VULNS := GO-2026-6911
+
 # govulncheck runs through "go run" so that it is always built with the
 # current toolchain (a binary built with an older Go cannot read newer sources);
 # "-scan module" flags every vulnerable module in go.mod, called or not, as
 # CI's dependency review does (-C: module scans fail in a directory without
-# Go files, such as the root)
-# GO-2026-6911 is an accepted module-level finding, which keeps this target
-# failing: see "Known Vulnerabilities" in the README; any other finding blocks
+# Go files, such as the root). The symbol scan accepts nothing: a finding there
+# means the code reaches the vulnerability.
 .PHONY: vuln
-vuln: ## check go.mod and the code for known vulnerabilities with govulncheck (run before every commit)
+vuln: ## check go.mod and the code for known vulnerabilities with govulncheck; only ACCEPTED_VULNS may be reported (run before every commit)
 	@# both always run: a finding in one must not hide the other
-	@rc=0; \
-	go run golang.org/x/vuln/cmd/govulncheck@latest -C cmd/nexus-iq-mcp -scan module || rc=1; \
+	@set -o pipefail; rc=0; \
+	found="$$(go run golang.org/x/vuln/cmd/govulncheck@latest -C cmd/nexus-iq-mcp -scan module -format json | jq -r 'select(.finding) | .finding.osv' | sort -u)" || { echo "the module scan failed" >&2; rc=1; }; \
+	for id in $$found; do \
+		case " $(ACCEPTED_VULNS) " in \
+			*" $$id "*) echo "accepted: $$id" ;; \
+			*) echo "NOT accepted: $$id (https://pkg.go.dev/vuln/$$id)" >&2; rc=1 ;; \
+		esac; \
+	done; \
+	for id in $(ACCEPTED_VULNS); do \
+		case " "$$(echo $$found)" " in \
+			*" $$id "*) ;; \
+			*) echo "$$id is no longer reported: remove it from ACCEPTED_VULNS and the README" >&2 ;; \
+		esac; \
+	done; \
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./... || rc=1; \
 	exit $$rc

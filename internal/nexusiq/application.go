@@ -2,13 +2,13 @@ package nexusiq
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // isUUID checks whether identifier is a canonical 36-character hyphenated UUID.
@@ -16,7 +16,8 @@ func isUUID(identifier string) bool {
 	if len(identifier) != 36 {
 		return false
 	}
-	return uuid.Validate(identifier) == nil
+	_, err := uuid.Parse(identifier)
+	return err == nil
 }
 
 // ResolveApplicationID translates a generic identifier (Name, Public ID, or UUID) into the internal Application ID.
@@ -76,10 +77,7 @@ func (c *Client) ResolveApplicationID(ctx context.Context, identifier string) (s
 }
 
 // GetComponentRemediation fetches the suggested upgrade paths for a component in a specific application context.
-func (c *Client) GetComponentRemediation(ctx context.Context, purl, appID, stageID string) (*RemediationResponse, error) {
-	if err := ValidatePURL(purl); err != nil {
-		return nil, err
-	}
+func (c *Client) GetComponentRemediation(ctx context.Context, purl, appID, stageID string) (jsontext.Value, error) {
 	if strings.TrimSpace(stageID) == "" {
 		stageID = "build"
 	}
@@ -88,7 +86,7 @@ func (c *Client) GetComponentRemediation(ctx context.Context, purl, appID, stage
 		PackageURL: purl,
 	}
 
-	var respPayload RemediationResponse
+	var respPayload jsontext.Value
 
 	endpoint := fmt.Sprintf("/api/v2/components/remediation/application/%s?stageId=%s",
 		url.PathEscape(appID),
@@ -100,11 +98,5 @@ func (c *Client) GetComponentRemediation(ctx context.Context, purl, appID, stage
 		return nil, fmt.Errorf("failed to fetch remediation paths: %w", err)
 	}
 
-	// Normalize nested remediation.versionChanges if returned by Nexus IQ v2 API
-	if respPayload.Remediation != nil && len(respPayload.VersionChanges) == 0 {
-		respPayload.VersionChanges = respPayload.Remediation.VersionChanges
-		respPayload.Remediation = nil
-	}
-
-	return &respPayload, nil
+	return respPayload, nil
 }

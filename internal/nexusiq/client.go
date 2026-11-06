@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,6 +27,10 @@ var (
 	// ErrAmbiguousApplication indicates that the identifier matches the names of several applications.
 	ErrAmbiguousApplication = errors.New("ambiguous application identifier")
 )
+
+// maxErrorBody is how much of an upstream error body reaches the client: a
+// proxy's error page must not fill the LLM's context.
+const maxErrorBody = 4096
 
 // ValidatePURL proactively validates that a string is a well-formed Package URL (pkg:<type>/<name>@<version>).
 func ValidatePURL(purl string) error {
@@ -107,6 +113,9 @@ func NewClient(baseURL, username, password string) (*Client, error) {
 	if u.RawQuery != "" || u.Fragment != "" {
 		return nil, errors.New("invalid base URL: it must not have a query or a fragment")
 	}
+	if sendsPasswordInClear(u) {
+		slog.Warn("NEXUS_IQ_URL uses plain http: the password travels unencrypted", "host", u.Host)
+	}
 	// Normalize base URL by removing trailing slashes
 	u.Path = strings.TrimRight(u.Path, "/")
 
@@ -116,8 +125,20 @@ func NewClient(baseURL, username, password string) (*Client, error) {
 		Password: password,
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second, // Prevent hanging requests
+			// Go keeps the password on a redirect to another port, to a
+			// subdomain or from https to http: a redirect is an error instead
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}, nil
+}
+
+// sendsPasswordInClear reports whether basic auth to u would cross a network
+// unencrypted.
+func sendsPasswordInClear(u *url.URL) bool {
+	host := u.Hostname()
+	return u.Scheme == "http" && host != "localhost" && !net.ParseIP(host).IsLoopback()
 }
 
 // DoRequest executes a read-only HTTP request against the Nexus IQ API
@@ -150,11 +171,19 @@ func (c *Client) DoRequest(ctx context.Context, method, endpoint string, payload
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	start := time.Now()
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
+		slog.Error("Nexus IQ request failed", "method", method, "endpoint", endpoint, "error", err)
 		return fmt.Errorf("http request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }() // read-only: a close error loses nothing
+
+	slog.Debug("Nexus IQ request", "method", method, "endpoint", endpoint, "status", resp.StatusCode, "duration", time.Since(start))
+	// 404 is a normal answer to a lookup; the error body may hold anything, so it is not logged
+	if (resp.StatusCode < 200 || resp.StatusCode >= 300) && resp.StatusCode != http.StatusNotFound {
+		slog.Error("Nexus IQ returned an error", "method", method, "endpoint", endpoint, "status", resp.StatusCode)
+	}
 
 	// Translate 401 Unauthorized into a descriptive configuration error
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -163,11 +192,18 @@ func (c *Client) DoRequest(ctx context.Context, method, endpoint string, payload
 
 	// Handle other non-2xx responses proactively
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("%w: api error (status %d): %s", ErrNotFound, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		if location := resp.Header.Get("Location"); location != "" {
+			return fmt.Errorf("api error (status %d): redirected to %s: point NEXUS_IQ_URL at the final address", resp.StatusCode, location)
 		}
-		return fmt.Errorf("api error (status %d): %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		if err != nil {
+			slog.Warn("failed to read the error body", "endpoint", endpoint, "error", err)
+		}
+		apiErr := fmt.Errorf("api error (status %d): %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("%w: %w", ErrNotFound, apiErr)
+		}
+		return apiErr
 	}
 
 	// Strictly unmarshal response if expected using json/v2

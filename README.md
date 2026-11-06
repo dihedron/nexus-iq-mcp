@@ -7,7 +7,7 @@ A Model Context Protocol (MCP) server implemented in Go 1.27+ that exposes read-
 - **Read-Only Execution:** All requests to Nexus IQ are strictly limited to `GET` and read-centric `POST` operations.
 - **PURL-First Design:** Ecosystem-agnostic Package URLs (PURLs) are used exclusively to identify software components, with proactive validation before upstream calls.
 - **Smart Identifier Resolution:** Tools accept human-readable application names, `publicId` values, or internal UUIDs and transparently resolve them to internal Nexus IQ application UUIDs.
-- **Stateless Design:** Relies entirely on the upstream Nexus IQ instance as the source of truth.
+- **Stateless Design:** Relies entirely on the upstream Nexus IQ instance as the source of truth. Component details and remediation replies pass through unchanged.
 
 ## Building
 
@@ -50,7 +50,7 @@ The server requires the following environment variables:
 
 ## Known Vulnerabilities
 
-`make vuln` reports one accepted finding, which is not a blocker; any other finding is.
+`make vuln` lists one accepted finding (`ACCEPTED_VULNS` in `custom.mk`) and passes; any other finding fails it.
 
 - **[GO-2026-6911](https://pkg.go.dev/vuln/GO-2026-6911)** (`github.com/mark3labs/mcp-go`, no fix available): the Streamable HTTP client in `client/transport` follows redirects and sends its credentials to the new host. This server uses only the `mcp` and `server` packages, so the vulnerable package is not in the binary. Remove this note when the advisory is fixed.
 

@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -36,7 +37,8 @@ func (cmd *Serve) Execute(args []string) error {
 	tools.Register(mcpServer, client)
 
 	slog.Info("serving MCP over stdio", "nexus_iq_url", client.BaseURL)
-	if err := server.ServeStdio(mcpServer); err != nil {
+	// SIGTERM and SIGINT cancel the server's context: that is a normal stop
+	if err := server.ServeStdio(mcpServer); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil

@@ -4,13 +4,38 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	json "encoding/json/v2" // Using Go 1.27's json/v2
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/dihedron/nexus-iq-mcp/internal/nexusiq"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// purlArg returns the trimmed and validated purl argument of a tool call.
+func purlArg(request mcp.CallToolRequest) (string, error) {
+	purl, err := request.RequireString("purl")
+	purl = strings.TrimSpace(purl)
+	if err != nil || purl == "" {
+		return "", errors.New("purl argument is missing or invalid")
+	}
+	if err := nexusiq.ValidatePURL(purl); err != nil {
+		return "", err
+	}
+	return purl, nil
+}
+
+// jsonResult encodes a reply of Nexus IQ as the text of a tool result.
+func jsonResult(v any) (*mcp.CallToolResult, error) {
+	responseBytes, err := json.Marshal(v, jsontext.WithIndent("  "))
+	if err != nil {
+		slog.Error("failed to serialize Nexus IQ response", "error", err)
+		return mcp.NewToolResultError(fmt.Sprintf("failed to serialize Nexus IQ response: %v", err)), nil
+	}
+	return mcp.NewToolResultText(string(responseBytes)), nil
+}
 
 // Register attaches the Nexus IQ tools to the MCP server instance
 func Register(s *server.MCPServer, client *nexusiq.Client) {
@@ -25,12 +50,8 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 	)
 
 	s.AddTool(detailsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		purl, err := request.RequireString("purl")
-		purl = strings.TrimSpace(purl)
-		if err != nil || purl == "" {
-			return mcp.NewToolResultError("purl argument is missing or invalid"), nil
-		}
-		if err := nexusiq.ValidatePURL(purl); err != nil {
+		purl, err := purlArg(request)
+		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
@@ -39,12 +60,7 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		responseBytes, err := json.Marshal(details, jsontext.WithIndent("  "))
-		if err != nil {
-			return mcp.NewToolResultError("failed to serialize Nexus IQ response"), nil
-		}
-
-		return mcp.NewToolResultText(string(responseBytes)), nil
+		return jsonResult(details)
 	})
 
 	// Tool 2: Component Versions
@@ -57,12 +73,8 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 	)
 
 	s.AddTool(versionsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		purl, err := request.RequireString("purl")
-		purl = strings.TrimSpace(purl)
-		if err != nil || purl == "" {
-			return mcp.NewToolResultError("purl argument is missing or invalid"), nil
-		}
-		if err := nexusiq.ValidatePURL(purl); err != nil {
+		purl, err := purlArg(request)
+		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
@@ -71,12 +83,7 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		responseBytes, err := json.Marshal(versions, jsontext.WithIndent("  "))
-		if err != nil {
-			return mcp.NewToolResultError("failed to serialize Nexus IQ response"), nil
-		}
-
-		return mcp.NewToolResultText(string(responseBytes)), nil
+		return jsonResult(versions)
 	})
 
 	// Tool 3: Component Remediation
@@ -91,12 +98,8 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 	)
 
 	s.AddTool(remediationTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		purl, err := request.RequireString("purl")
-		purl = strings.TrimSpace(purl)
-		if err != nil || purl == "" {
-			return mcp.NewToolResultError("purl argument is missing or invalid"), nil
-		}
-		if err := nexusiq.ValidatePURL(purl); err != nil {
+		purl, err := purlArg(request)
+		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
@@ -120,11 +123,6 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		responseBytes, err := json.Marshal(remediation, jsontext.WithIndent("  "))
-		if err != nil {
-			return mcp.NewToolResultError("failed to serialize Nexus IQ remediation response"), nil
-		}
-
-		return mcp.NewToolResultText(string(responseBytes)), nil
+		return jsonResult(remediation)
 	})
 }

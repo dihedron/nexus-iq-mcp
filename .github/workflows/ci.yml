@@ -1,7 +1,7 @@
 name: CI
 
 # One workflow, three parallel jobs: the build (gofmt, go vet, golangci-lint
-# with gosec and compile through "make"; the tests with coverage; then the
+# with gosec and compile through "make"; govulncheck; the tests with coverage; then the
 # SonarQube Cloud analysis of the same checkout and coverage), the secret
 # scans, and, on pull requests, the dependency review.
 # CodeQL, the documents and releases keep workflows of their own (other
@@ -68,6 +68,10 @@ jobs:
 
       - name: Lint and build
         run: make
+
+      # jq comes with the runner; the accepted findings are in custom.mk
+      - name: Check for known vulnerabilities (make vuln)
+        run: make vuln
 
       - name: Test with coverage
         # -coverpkg credits code with the coverage of every package's tests,

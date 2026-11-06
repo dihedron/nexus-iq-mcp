@@ -14,3 +14,6 @@
 
 `invalid base URL`
 :   `NEXUS_IQ_URL` must be an `http` or `https` URL without credentials, query or fragment. Put the credentials in `NEXUS_IQ_USERNAME` and `NEXUS_IQ_PASSWORD`.
+
+`redirected to ...: point NEXUS_IQ_URL at the final address`
+:   Nexus IQ or a proxy answered with a redirect, which the server does not follow. Set `NEXUS_IQ_URL` to the address shown.

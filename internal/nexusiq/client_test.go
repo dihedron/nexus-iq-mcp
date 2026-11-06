@@ -1,12 +1,16 @@
 package nexusiq
 
 import (
+	"bytes"
 	"context"
 	json "encoding/json/v2"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -56,23 +60,9 @@ func TestClientAndEndpoints(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		resp := ComponentDetailsResponse{
-			ComponentDetails: []ComponentDetail{
-				{
-					Component:  ComponentInfo{PackageURL: req.Components[0].PackageURL},
-					MatchState: "exact",
-					SecurityData: SecurityData{
-						SecurityIssues: []SecurityIssue{
-							{Source: "cve", Reference: "CVE-2023-0001", Severity: 7.5},
-						},
-					},
-					LicenseData: LicenseData{
-						DeclaredLicenses: []License{{LicenseId: "MIT", LicenseName: "MIT License"}},
-					},
-				},
-			},
-		}
-		_ = json.MarshalWrite(w, resp)
+		_, _ = w.Write([]byte(`{"componentDetails":[{"component":{"packageUrl":"` + req.Components[0].PackageURL + `"},"matchState":"exact",
+			"securityData":{"securityIssues":[{"source":"cve","reference":"CVE-2023-0001","severity":7.5}]},
+			"licenseData":{"declaredLicenses":[{"licenseId":"MIT","licenseName":"MIT License"}]}}]}`))
 	})
 
 	mux.HandleFunc("POST /api/v2/components/versions", func(w http.ResponseWriter, r *http.Request) {
@@ -111,18 +101,7 @@ func TestClientAndEndpoints(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		_ = json.MarshalWrite(w, map[string]any{
-			"remediation": map[string]any{
-				"versionChanges": []VersionChange{
-					{
-						Type: "next-no-violations",
-						Data: VersionChangeData{
-							Component: ComponentInfo{PackageURL: "pkg:golang/github.com/gin-gonic/gin@v1.10.0"},
-						},
-					},
-				},
-			},
-		})
+		_, _ = w.Write([]byte(`{"remediation":{"versionChanges":[{"type":"next-no-violations","data":{"component":{"packageUrl":"pkg:golang/github.com/gin-gonic/gin@v1.10.0"}}}]}}`))
 	})
 
 	srv := httptest.NewServer(mux)
@@ -140,8 +119,8 @@ func TestClientAndEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetComponentDetails failed: %v", err)
 	}
-	if details.MatchState != "exact" || len(details.SecurityData.SecurityIssues) != 1 {
-		t.Fatalf("unexpected details: %+v", details)
+	if !strings.Contains(string(details), `"matchState":"exact"`) || !strings.Contains(string(details), "CVE-2023-0001") {
+		t.Fatalf("unexpected details: %s", details)
 	}
 
 	// 2. Component Versions
@@ -183,8 +162,8 @@ func TestClientAndEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetComponentRemediation failed: %v", err)
 	}
-	if len(rem.VersionChanges) != 1 || rem.VersionChanges[0].Type != "next-no-violations" {
-		t.Fatalf("unexpected remediation response: %+v", rem)
+	if !strings.Contains(string(rem), "next-no-violations") {
+		t.Fatalf("unexpected remediation response: %s", rem)
 	}
 
 	// 8. Unauthorized client
@@ -294,5 +273,122 @@ func TestResolveApplicationID(t *testing.T) {
 				t.Errorf("error does not list the candidates: %v", err)
 			}
 		})
+	}
+}
+
+func FuzzValidatePURL(f *testing.F) {
+	for _, seed := range []string{
+		"", "pkg:", "pkg:/", "pkg:a/b", "pkg:a/b@", "pkg:a/b@1?q=1#s", "pkg:///a/b", " pkg:a/b", "pkg:a/@1", "pkg:a/b@1@2", "pkg:%zz/b",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, purl string) {
+		err := ValidatePURL(purl)
+		if err != nil {
+			if !errors.Is(err, ErrInvalidPURL) {
+				t.Fatalf("%q: unexpected error type: %v", purl, err)
+			}
+			return
+		}
+		// what passes is sent as it is
+		if !strings.HasPrefix(purl, "pkg:") || strings.ContainsAny(purl, " \t\r\n") {
+			t.Fatalf("%q passed validation", purl)
+		}
+	})
+}
+
+func TestRedirectsAreNotFollowed(t *testing.T) {
+	var reached atomic.Bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Store(true)
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/stolen", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	client, err := NewClient(srv.URL, "admin", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.DoRequest(context.Background(), http.MethodPost, "/any", map[string]string{"a": "b"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "307") || !strings.Contains(err.Error(), other.URL) {
+		t.Errorf("expected an error naming the status and the target, got: %v", err)
+	}
+	if reached.Load() {
+		t.Error("the redirect was followed, with the credentials")
+	}
+}
+
+func TestErrorBodyIsBounded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 1024*1024))
+	}))
+	defer srv.Close()
+
+	client, err := NewClient(srv.URL, "admin", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.DoRequest(context.Background(), http.MethodGet, "/any", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "502") {
+		t.Fatalf("expected the status in the error, got: %v", err)
+	}
+	if len(err.Error()) > 5000 {
+		t.Errorf("the error holds %d bytes", len(err.Error()))
+	}
+}
+
+func TestRequestsAreLoggedWithoutCredentials(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previous)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/fails" {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	client, err := NewClient(srv.URL, "admin", "s3cr3t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = client.DoRequest(context.Background(), http.MethodGet, "/works", nil, nil)
+	_ = client.DoRequest(context.Background(), http.MethodGet, "/fails", nil, nil)
+
+	out := logs.String()
+	for _, want := range []string{"endpoint=/works", "status=200", "duration=", "level=ERROR", "endpoint=/fails", "status=500"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the log misses %q:\n%s", want, out)
+		}
+	}
+	for _, secret := range []string{"s3cr3t", "Authorization", "YWRtaW46czNjcjN0"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("the log holds %q:\n%s", secret, out)
+		}
+	}
+}
+
+func TestSendsPasswordInClear(t *testing.T) {
+	tests := map[string]bool{
+		"http://iq.example.com":  true,
+		"http://10.0.0.1:8070":   true,
+		"https://iq.example.com": false,
+		"http://localhost:8070":  false,
+		"http://127.0.0.1:8070":  false,
+		"http://[::1]:8070":      false,
+	}
+	for raw, want := range tests {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := sendsPasswordInClear(u); got != want {
+			t.Errorf("%s: got %v, want %v", raw, got, want)
+		}
 	}
 }

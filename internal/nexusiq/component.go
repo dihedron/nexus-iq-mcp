@@ -2,16 +2,13 @@ package nexusiq
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"fmt"
 	"net/http"
 )
 
 // GetComponentDetails queries Nexus IQ for metadata, security, and license info for a specific PURL.
-func (c *Client) GetComponentDetails(ctx context.Context, purl string) (*ComponentDetail, error) {
-	if err := ValidatePURL(purl); err != nil {
-		return nil, err
-	}
-
+func (c *Client) GetComponentDetails(ctx context.Context, purl string) (jsontext.Value, error) {
 	// Construct the POST payload exactly as Nexus IQ expects it
 	reqPayload := ComponentDetailsRequest{
 		Components: []ComponentRequestItem{
@@ -32,16 +29,12 @@ func (c *Client) GetComponentDetails(ctx context.Context, purl string) (*Compone
 		return nil, fmt.Errorf("no details found for purl: %s", purl)
 	}
 
-	return &respPayload.ComponentDetails[0], nil
+	return respPayload.ComponentDetails[0], nil
 }
 
 // GetComponentVersions retrieves the complete list of known versions for a given dependency.
 // It uses POST /api/v2/components/versions as required by the Nexus IQ API.
 func (c *Client) GetComponentVersions(ctx context.Context, purl string) ([]string, error) {
-	if err := ValidatePURL(purl); err != nil {
-		return nil, err
-	}
-
 	reqPayload := PurlRequest{
 		PackageURL: purl,
 	}

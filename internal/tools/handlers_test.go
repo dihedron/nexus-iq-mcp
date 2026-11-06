@@ -17,24 +17,13 @@ import (
 func TestMCPToolHandlers(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v2/components/details", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.MarshalWrite(w, nexusiq.ComponentDetailsResponse{
-			ComponentDetails: []nexusiq.ComponentDetail{
-				{
-					Component:  nexusiq.ComponentInfo{PackageURL: "pkg:golang/github.com/gin-gonic/gin@v1.9.1"},
-					MatchState: "exact",
-				},
-			},
-		})
+		_, _ = w.Write([]byte(`{"componentDetails":[{"component":{"packageUrl":"pkg:golang/github.com/gin-gonic/gin@v1.9.1"},"matchState":"exact"}]}`))
 	})
 	mux.HandleFunc("POST /api/v2/components/versions", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.MarshalWrite(w, []string{"v1.9.0", "v1.9.1"})
 	})
 	mux.HandleFunc("POST /api/v2/components/remediation/application/{appId}", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.MarshalWrite(w, nexusiq.RemediationResponse{
-			VersionChanges: []nexusiq.VersionChange{
-				{Type: "next-no-violations"},
-			},
-		})
+		_, _ = w.Write([]byte(`{"remediation":{"versionChanges":[{"type":"next-no-violations"}]}}`))
 	})
 
 	srv := httptest.NewServer(mux)
@@ -173,6 +162,50 @@ func TestHandlersSendTrimmedPURL(t *testing.T) {
 	for _, body := range got {
 		if !strings.Contains(body, `"`+purl+`"`) {
 			t.Errorf("upstream body is not trimmed: %s", body)
+		}
+	}
+}
+
+// TestRepliesPassThrough checks that fields this server does not know about
+// reach the client.
+func TestRepliesPassThrough(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v2/components/details", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"componentDetails":[{"matchState":"exact","integrityRating":"Normal","licenseData":{"effectiveLicenses":[{"licenseId":"MIT"}],"status":"Overridden"}}]}`))
+	})
+	mux.HandleFunc("POST /api/v2/components/remediation/application/{appId}", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"remediation":{"versionChanges":[{"type":"next-no-violations","data":{"component":{"packageUrl":"pkg:a/b@2","extra":"kept"}}}]}}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client, err := nexusiq.NewClient(srv.URL, "admin", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcpServer := server.NewMCPServer("test", "0")
+	Register(mcpServer, client)
+
+	tests := []struct {
+		tool string
+		want []string
+	}{
+		{"get_component_details", []string{"integrityRating", "effectiveLicenses", "Overridden"}},
+		{"get_component_remediation", []string{"next-no-violations", "kept"}},
+	}
+	for _, tt := range tests {
+		req := mcp.CallToolRequest{}
+		req.Params.Name = tt.tool
+		req.Params.Arguments = map[string]any{"purl": "pkg:a/b@1", "application_identifier": "4537e6fe-8265-43f1-8c0d-9f88e4ef1234"}
+		res, err := mcpServer.GetTool(tt.tool).Handler(context.Background(), req)
+		if err != nil || res.IsError {
+			t.Fatalf("%s: err=%v, result=%+v", tt.tool, err, res)
+		}
+		text := res.Content[0].(mcp.TextContent).Text
+		for _, want := range tt.want {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s: %q was dropped: %s", tt.tool, want, text)
+			}
 		}
 	}
 }

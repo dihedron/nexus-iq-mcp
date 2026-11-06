@@ -43,6 +43,10 @@ jobs:
         with:
           syft-version: "v1.54.1"
 
+      # before the packaging key is on the runner
+      - name: Test
+        run: go test -count=1 ./...
+
       # the packaging key: the armored private key and its passphrase
       # are repository secrets; its public half is packaging/signing-key.asc
       - name: Import the packaging key
@@ -78,12 +82,6 @@ jobs:
       - name: Remove the packaging key
         if: always()
         run: rm -f "$RUNNER_TEMP/packaging-key.asc"
-
-      # - name: Test
-      #   run: |
-      #     go test -v ./...
-      #     # You can add more steps here, like linting or building a coverage report
-
       # - name: Run GoReleaser
       #   uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
       #   with:
