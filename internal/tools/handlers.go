@@ -94,7 +94,7 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithString("purl", mcp.Required(), mcp.Description("The Package URL of the violating component.")),
 		mcp.WithString("application_identifier", mcp.Required(), mcp.Description("The exact name, publicId, or internal UUID of the application in Nexus IQ.")),
-		mcp.WithString("stage_id", mcp.Description("The lifecycle stage (e.g., build, release, operate). Defaults to 'build'.")),
+		mcp.WithString("stage_id", mcp.Enum("develop", "source", "build", "stage-release", "release", "operate"), mcp.Description("The lifecycle stage. Defaults to 'build'.")),
 	)
 
 	s.AddTool(remediationTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -108,10 +108,7 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 			return mcp.NewToolResultError("application_identifier argument is missing or invalid"), nil
 		}
 
-		stageID := strings.TrimSpace(request.GetString("stage_id", "build"))
-		if stageID == "" {
-			stageID = "build"
-		}
+		stageID := strings.TrimSpace(request.GetString("stage_id", ""))
 
 		internalAppID, err := client.ResolveApplicationID(ctx, appIdentifier)
 		if err != nil {

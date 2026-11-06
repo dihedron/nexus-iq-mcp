@@ -36,7 +36,7 @@ func (c *Client) ResolveApplicationID(ctx context.Context, identifier string) (s
 	var pubIDResp ApplicationsResponse
 	endpoint := fmt.Sprintf("/api/v2/applications?publicId=%s", url.QueryEscape(identifier))
 
-	if err := c.DoRequest(ctx, http.MethodGet, endpoint, nil, &pubIDResp); err != nil {
+	if err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &pubIDResp); err != nil {
 		// Only 404 Not Found falls through to full application list lookup: any
 		// other failure must not end up reported as a missing application
 		if !errors.Is(err, ErrNotFound) {
@@ -48,7 +48,7 @@ func (c *Client) ResolveApplicationID(ctx context.Context, identifier string) (s
 
 	// 3. Fallback: Query GET /api/v2/applications, iterate, and find the application where name == application_identifier.
 	var allAppsResp ApplicationsResponse
-	if err := c.DoRequest(ctx, http.MethodGet, "/api/v2/applications", nil, &allAppsResp); err != nil {
+	if err := c.doRequest(ctx, http.MethodGet, "/api/v2/applications", nil, &allAppsResp); err != nil {
 		return "", fmt.Errorf("failed to fetch applications list for resolution: %w", err)
 	}
 
@@ -93,7 +93,7 @@ func (c *Client) GetComponentRemediation(ctx context.Context, purl, appID, stage
 		url.QueryEscape(stageID),
 	)
 
-	err := c.DoRequest(ctx, http.MethodPost, endpoint, reqPayload, &respPayload)
+	err := c.doRequest(ctx, http.MethodPost, endpoint, reqPayload, &respPayload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch remediation paths: %w", err)
 	}

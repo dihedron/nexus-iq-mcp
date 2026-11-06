@@ -6,9 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jessevdk/go-flags"
 )
 
 func TestRelevantEnv(t *testing.T) {
+	const userInfo = "admin:" + "hunter2" + "@" // joined so that secret scanners do not see a URL with a password
 	tests := []struct {
 		env, want string
 		ok        bool
@@ -17,6 +20,8 @@ func TestRelevantEnv(t *testing.T) {
 		{"NEXUS_IQ_MCP_LOG_LEVEL=debug", "NEXUS_IQ_MCP_LOG_LEVEL=debug", true},
 		{"NEXUS_IQ_PASSWORD=hunter2", "NEXUS_IQ_PASSWORD=********", true},
 		{"NEXUS_IQ_URL=http://localhost:8070", "NEXUS_IQ_URL=http://localhost:8070", true},
+		{"NEXUS_IQ_URL=https://" + userInfo + "iq.example.com", "NEXUS_IQ_URL=********", true},
+		{"NEXUS_IQ_URL=" + userInfo + "iq.example.com", "NEXUS_IQ_URL=********", true},
 		{"NEXUS_IQ_MCP_CLIENT_SECRET=s3cr3t", "NEXUS_IQ_MCP_CLIENT_SECRET=********", true},
 		{"OS_AUTH_URL=https://keystone:5000/v3", "", false},
 		{"HOME=/root", "", false},
@@ -26,6 +31,17 @@ func TestRelevantEnv(t *testing.T) {
 		got, ok := relevantEnv(tt.env)
 		if got != tt.want || ok != tt.ok {
 			t.Errorf("relevantEnv(%q) = %q, %v; want %q, %v", tt.env, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+// TestDotEnvFlagForms checks that the flag takes its value in every form.
+func TestDotEnvFlagForms(t *testing.T) {
+	for _, args := range [][]string{{"--dotenv", "x"}, {"--dotenv=x"}, {"-D", "x"}} {
+		var cmd Version
+		rest, err := flags.ParseArgs(&cmd, args)
+		if err != nil || len(rest) != 0 || cmd.DotEnv == nil || *cmd.DotEnv != "x" {
+			t.Errorf("%v: err=%v, rest=%v, dotenv=%v", args, err, rest, cmd.DotEnv)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -207,5 +208,51 @@ func TestRepliesPassThrough(t *testing.T) {
 				t.Errorf("%s: %q was dropped: %s", tt.tool, want, text)
 			}
 		}
+	}
+}
+
+// TestStageID checks the stages offered to the client and that a blank stage
+// falls back to the default upstream.
+func TestStageID(t *testing.T) {
+	var got []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v2/components/remediation/application/{appId}", func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.Query().Get("stageId"))
+		_, _ = w.Write([]byte(`{}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client, err := nexusiq.NewClient(srv.URL, "admin", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcpServer := server.NewMCPServer("test", "0")
+	Register(mcpServer, client)
+	tool := mcpServer.GetTool("get_component_remediation")
+
+	stage, ok := tool.Tool.InputSchema.Properties["stage_id"].(map[string]any)
+	if !ok {
+		t.Fatalf("stage_id schema: %+v", tool.Tool.InputSchema.Properties["stage_id"])
+	}
+	if want := []string{"develop", "source", "build", "stage-release", "release", "operate"}; !slices.Equal(stage["enum"].([]string), want) {
+		t.Errorf("enum = %v, want %v", stage["enum"], want)
+	}
+
+	for _, sent := range []any{nil, "  ", " release "} {
+		req := mcp.CallToolRequest{}
+		req.Params.Name = "get_component_remediation"
+		args := map[string]any{"purl": "pkg:a/b@1", "application_identifier": "4537e6fe-8265-43f1-8c0d-9f88e4ef1234"}
+		if sent != nil {
+			args["stage_id"] = sent
+		}
+		req.Params.Arguments = args
+		res, err := tool.Handler(context.Background(), req)
+		if err != nil || res.IsError {
+			t.Fatalf("stage %v: err=%v, result=%+v", sent, err, res)
+		}
+	}
+	if want := []string{"build", "build", "release"}; !slices.Equal(got, want) {
+		t.Errorf("upstream stages = %v, want %v", got, want)
 	}
 }

@@ -13,5 +13,12 @@ func TestPrint(t *testing.T) {
 	if !strings.Contains(b.String(), "v1.2.3") || !strings.Contains(b.String(), "test build") {
 		t.Errorf("Print wrote %q", b.String())
 	}
-	PrintFull(&b) // writes to standard output
+	b.Reset()
+	PrintFull(&b)
+	if !strings.Contains(b.String(), "Build Commit") {
+		t.Errorf("PrintFull did not use its writer: %q", b.String())
+	}
+	if n := strings.Count(b.String(), "Git Time"); n != 1 {
+		t.Errorf("PrintFull wrote Git Time %d times", n)
+	}
 }

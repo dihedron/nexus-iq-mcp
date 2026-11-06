@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -18,7 +19,7 @@ import (
 var (
 	// ErrInvalidPURL indicates that the provided Package URL is malformed.
 	ErrInvalidPURL = errors.New("invalid Package URL (PURL)")
-	// ErrUnauthorized indicates an upstream 401/403 authentication or authorization failure.
+	// ErrUnauthorized indicates an upstream 401 authentication failure.
 	ErrUnauthorized = errors.New("authentication to Nexus IQ failed (401 Unauthorized): verify NEXUS_IQ_USERNAME and NEXUS_IQ_PASSWORD configuration")
 	// ErrApplicationNotFound indicates the requested application identifier does not exist in Nexus IQ.
 	ErrApplicationNotFound = errors.New("application not found in Nexus IQ")
@@ -31,6 +32,9 @@ var (
 // maxErrorBody is how much of an upstream error body reaches the client: a
 // proxy's error page must not fill the LLM's context.
 const maxErrorBody = 4096
+
+// purlType is the package type allowed by the PURL specification.
+var purlType = regexp.MustCompile(`^[A-Za-z.+-][A-Za-z0-9.+-]*$`)
 
 // ValidatePURL proactively validates that a string is a well-formed Package URL (pkg:<type>/<name>@<version>).
 func ValidatePURL(purl string) error {
@@ -56,17 +60,12 @@ func ValidatePURL(purl string) error {
 	}
 
 	// Check optional @version
-	var version string
-	hasVersion := false
 	if atIdx := strings.LastIndex(remainder, "@"); atIdx != -1 {
-		hasVersion = true
-		version = remainder[atIdx+1:]
-		remainder = remainder[:atIdx]
-		if version == "" {
+		if atIdx == len(remainder)-1 {
 			return fmt.Errorf("%w: %q has an empty version after '@'", ErrInvalidPURL, purl)
 		}
+		remainder = remainder[:atIdx]
 	}
-	_ = hasVersion
 
 	slashIdx := strings.Index(remainder, "/")
 	if slashIdx <= 0 || slashIdx == len(remainder)-1 {
@@ -77,6 +76,9 @@ func ValidatePURL(purl string) error {
 	pkgName := strings.Trim(remainder[slashIdx+1:], "/")
 	if pkgType == "" || pkgName == "" {
 		return fmt.Errorf("%w: %q must include a non-empty package type and name", ErrInvalidPURL, purl)
+	}
+	if !purlType.MatchString(pkgType) {
+		return fmt.Errorf("%w: %q has an invalid package type: it allows only letters, digits, '.', '+' and '-', and cannot start with a digit", ErrInvalidPURL, purl)
 	}
 
 	return nil
@@ -141,8 +143,8 @@ func sendsPasswordInClear(u *url.URL) bool {
 	return u.Scheme == "http" && host != "localhost" && !net.ParseIP(host).IsLoopback()
 }
 
-// DoRequest executes a read-only HTTP request against the Nexus IQ API
-func (c *Client) DoRequest(ctx context.Context, method, endpoint string, payload any, response any) error {
+// doRequest executes a read-only HTTP request against the Nexus IQ API
+func (c *Client) doRequest(ctx context.Context, method, endpoint string, payload any, response any) error {
 	if method != http.MethodGet && method != http.MethodPost {
 		return fmt.Errorf("unsupported HTTP method %q: server is strictly read-only (only GET and POST allowed)", method)
 	}

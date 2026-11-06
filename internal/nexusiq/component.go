@@ -19,7 +19,7 @@ func (c *Client) GetComponentDetails(ctx context.Context, purl string) (jsontext
 	var respPayload ComponentDetailsResponse
 
 	// Execute the HTTP request to the upstream API
-	err := c.DoRequest(ctx, http.MethodPost, "/api/v2/components/details", reqPayload, &respPayload)
+	err := c.doRequest(ctx, http.MethodPost, "/api/v2/components/details", reqPayload, &respPayload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch component details from Nexus IQ: %w", err)
 	}
@@ -42,7 +42,7 @@ func (c *Client) GetComponentVersions(ctx context.Context, purl string) ([]strin
 	// The API returns a direct JSON array of version strings
 	var versions []string
 
-	err := c.DoRequest(ctx, http.MethodPost, "/api/v2/components/versions", reqPayload, &versions)
+	err := c.doRequest(ctx, http.MethodPost, "/api/v2/components/versions", reqPayload, &versions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch component versions from Nexus IQ: %w", err)
 	}

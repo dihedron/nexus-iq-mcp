@@ -45,7 +45,7 @@ The server requires the following environment variables:
    - **Parameters:**
      - `purl` (required): Package URL of the violating component.
      - `application_identifier` (required): Exact application `name`, `publicId`, or internal UUID.
-     - `stage_id` (optional): Lifecycle stage (defaults to `build`).
+     - `stage_id` (optional): Lifecycle stage: `develop`, `source`, `build`, `stage-release`, `release` or `operate` (defaults to `build`).
    - **Upstream Endpoint:** `POST /api/v2/components/remediation/application/{resolved_internal_id}?stageId={stage_id}`
 
 ## Known Vulnerabilities

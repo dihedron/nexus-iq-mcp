@@ -20,6 +20,9 @@ func TestValidatePURL(t *testing.T) {
 		"pkg:maven/org.apache.commons/commons-lang3@3.12.0",
 		"pkg:npm/%40angular/core@16.0.0",
 		"pkg:pypi/requests",
+		"pkg:c++/name@1",
+		"pkg:a.b-c/name@1",
+		"pkg:Maven/a/b@1",
 	}
 	for _, purl := range valid {
 		if err := ValidatePURL(purl); err != nil {
@@ -38,6 +41,10 @@ func TestValidatePURL(t *testing.T) {
 		"pkg:/gin@v1.0.0",
 		"pkg:golang/gin@",
 		"pkg:golang/gin @v1.0.0",
+		"pkg:1abc/name@1",
+		"pkg:go_lang/name@1",
+		"pkg:a%20b/name@1",
+		"pkg:np@m/name@1",
 	}
 	for _, purl := range invalid {
 		if err := ValidatePURL(purl); !errors.Is(err, ErrInvalidPURL) {
@@ -312,7 +319,7 @@ func TestRedirectsAreNotFollowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = client.DoRequest(context.Background(), http.MethodPost, "/any", map[string]string{"a": "b"}, nil)
+	err = client.doRequest(context.Background(), http.MethodPost, "/any", map[string]string{"a": "b"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "307") || !strings.Contains(err.Error(), other.URL) {
 		t.Errorf("expected an error naming the status and the target, got: %v", err)
 	}
@@ -332,7 +339,7 @@ func TestErrorBodyIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = client.DoRequest(context.Background(), http.MethodGet, "/any", nil, nil)
+	err = client.doRequest(context.Background(), http.MethodGet, "/any", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "502") {
 		t.Fatalf("expected the status in the error, got: %v", err)
 	}
@@ -357,8 +364,8 @@ func TestRequestsAreLoggedWithoutCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = client.DoRequest(context.Background(), http.MethodGet, "/works", nil, nil)
-	_ = client.DoRequest(context.Background(), http.MethodGet, "/fails", nil, nil)
+	_ = client.doRequest(context.Background(), http.MethodGet, "/works", nil, nil)
+	_ = client.doRequest(context.Background(), http.MethodGet, "/fails", nil, nil)
 
 	out := logs.String()
 	for _, want := range []string{"endpoint=/works", "status=200", "duration=", "level=ERROR", "endpoint=/fails", "status=500"} {

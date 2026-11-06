@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/dihedron/nexus-iq-mcp/pkg/metadata"
-	"github.com/joho/godotenv"
 )
 
 // Version is the command that prints information about the application
@@ -16,7 +15,7 @@ type Version struct {
 	// Verbose is the flag that indicates whether to print verbose information about the application.
 	Verbose bool `short:"v" long:"verbose" description:"Print verbose information about the application."`
 	// DotEnv is the optional path to the .env file.
-	DotEnv *string `short:"D" long:"dotenv" description:"The path to the .env file." optional:"true" env:"NEXUS_IQ_MCP_DOTENV"`
+	DotEnv *string `short:"D" long:"dotenv" description:"The path to the .env file." env:"NEXUS_IQ_MCP_DOTENV"`
 }
 
 // Execute is the real implementation of the Version command.
@@ -25,7 +24,7 @@ func (cmd *Version) Execute(args []string) error {
 	if cmd.Verbose {
 		metadata.PrintFull(os.Stdout)
 		if cmd.DotEnv != nil {
-			if err := godotenv.Load(*cmd.DotEnv); err != nil {
+			if err := metadata.LoadDotEnv(*cmd.DotEnv); err != nil {
 				slog.Error("error loading .env file", "error", err)
 			} else {
 				slog.Info("successfully loaded .env file", "path", *cmd.DotEnv)
@@ -48,9 +47,13 @@ func (cmd *Version) Execute(args []string) error {
 // (NEXUS_IQ_* settings) and returns it for printing, with the values of secrets
 // masked.
 func relevantEnv(env string) (string, bool) {
-	name, _, _ := strings.Cut(env, "=")
+	name, value, _ := strings.Cut(env, "=")
 	if !strings.HasPrefix(name, "NEXUS_IQ_") {
 		return "", false
+	}
+	// userinfo in a URL may hold a password, even if the URL does not parse
+	if strings.Contains(name, "URL") && strings.Contains(value, "@") {
+		return name + "=********", true
 	}
 	for _, secret := range []string{"PASSWORD", "SECRET", "TOKEN", "PASSCODE"} {
 		if strings.Contains(name, secret) {

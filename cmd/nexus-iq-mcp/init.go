@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/dihedron/nexus-iq-mcp/pkg/metadata"
-	"github.com/joho/godotenv"
 )
 
 var (
@@ -27,14 +26,14 @@ func init() {
 		AddSource: true,
 	}
 
-	// load .env file if specified and present
-	if dotenv, ok := os.LookupEnv(metadata.DotEnvVarName); ok {
-		slog.Info("loading .env file", "path", dotenv)
-		if err := godotenv.Load(dotenv); err != nil {
-			slog.Error("error loading .env file", "error", err)
-		}
-		slog.Info("successfully loaded .env file", "path", dotenv)
+	// load .env file if specified and present; it may set the log level, so the
+	// outcome is logged once the logger is ready
+	var dotenvErr error
+	dotenv, dotenvSet := os.LookupEnv(metadata.DotEnvVarName)
+	if dotenvSet {
+		dotenvErr = metadata.LoadDotEnv(dotenv)
 	}
+	silenced := false
 
 	// get log elevel from environment variable where, given
 	// the binary name "my-app", the environment variable is "MY_APP_LOG_LEVEL"
@@ -62,6 +61,7 @@ func init() {
 			options.Level = slog.LevelError
 		case "off", "none", "null", "nil", "no", "n":
 			options.Level = LevelNone
+			silenced = true
 		}
 	}
 
@@ -98,6 +98,17 @@ func init() {
 	// initialise the logger
 	handler := slog.NewTextHandler(writer, options)
 	slog.SetDefault(slog.New(handler))
+
+	switch {
+	case !dotenvSet:
+	case dotenvErr == nil:
+		slog.Info("successfully loaded .env file", "path", dotenv)
+	case options.Level == LevelNone && !silenced:
+		// no level means a silent logger, and a failed load must not go unseen
+		_, _ = fmt.Fprintf(os.Stderr, "error loading .env file %s: %v\n", dotenv, dotenvErr)
+	default:
+		slog.Error("error loading .env file", "path", dotenv, "error", dotenvErr)
+	}
 
 	// check if CPU profiling should be enabled
 	filename, ok := os.LookupEnv(
