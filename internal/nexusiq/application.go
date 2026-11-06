@@ -36,10 +36,11 @@ func (c *Client) ResolveApplicationID(ctx context.Context, identifier string) (s
 	endpoint := fmt.Sprintf("/api/v2/applications?publicId=%s", url.QueryEscape(identifier))
 
 	if err := c.DoRequest(ctx, http.MethodGet, endpoint, nil, &pubIDResp); err != nil {
-		if errors.Is(err, ErrUnauthorized) {
-			return "", err
+		// Only 404 Not Found falls through to full application list lookup: any
+		// other failure must not end up reported as a missing application
+		if !errors.Is(err, ErrNotFound) {
+			return "", fmt.Errorf("failed to look up application by publicId: %w", err)
 		}
-		// Other errors (such as 404 Not Found) fall through to full application list lookup
 	} else if len(pubIDResp.Applications) > 0 {
 		return pubIDResp.Applications[0].ID, nil
 	}
@@ -50,10 +51,24 @@ func (c *Client) ResolveApplicationID(ctx context.Context, identifier string) (s
 		return "", fmt.Errorf("failed to fetch applications list for resolution: %w", err)
 	}
 
+	var named []Application
 	for _, app := range allAppsResp.Applications {
-		if app.Name == identifier || app.PublicID == identifier || app.ID == identifier {
+		if app.PublicID == identifier || app.ID == identifier {
 			return app.ID, nil
 		}
+		if app.Name == identifier {
+			named = append(named, app)
+		}
+	}
+	if len(named) == 1 {
+		return named[0].ID, nil
+	}
+	if len(named) > 1 {
+		publicIDs := make([]string, 0, len(named))
+		for _, app := range named {
+			publicIDs = append(publicIDs, app.PublicID)
+		}
+		return "", fmt.Errorf("%w: %d applications are named %q; use one of their publicIds: %s", ErrAmbiguousApplication, len(named), identifier, strings.Join(publicIDs, ", "))
 	}
 
 	// 4. If unresolved, return a structured error guiding the LLM that the application_identifier does not exist.

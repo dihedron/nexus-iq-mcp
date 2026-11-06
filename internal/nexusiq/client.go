@@ -20,22 +20,25 @@ var (
 	ErrUnauthorized = errors.New("authentication to Nexus IQ failed (401 Unauthorized): verify NEXUS_IQ_USERNAME and NEXUS_IQ_PASSWORD configuration")
 	// ErrApplicationNotFound indicates the requested application identifier does not exist in Nexus IQ.
 	ErrApplicationNotFound = errors.New("application not found in Nexus IQ")
+	// ErrNotFound indicates an upstream 404 response.
+	ErrNotFound = errors.New("not found")
+	// ErrAmbiguousApplication indicates that the identifier matches the names of several applications.
+	ErrAmbiguousApplication = errors.New("ambiguous application identifier")
 )
 
 // ValidatePURL proactively validates that a string is a well-formed Package URL (pkg:<type>/<name>@<version>).
 func ValidatePURL(purl string) error {
-	trimmed := strings.TrimSpace(purl)
-	if trimmed == "" {
+	if purl == "" {
 		return fmt.Errorf("%w: purl cannot be empty", ErrInvalidPURL)
 	}
-	if strings.ContainsAny(trimmed, " \t\r\n") {
+	if strings.ContainsAny(purl, " \t\r\n") {
 		return fmt.Errorf("%w: %q must not contain whitespace", ErrInvalidPURL, purl)
 	}
-	if !strings.HasPrefix(trimmed, "pkg:") {
+	if !strings.HasPrefix(purl, "pkg:") {
 		return fmt.Errorf("%w: %q must start with the 'pkg:' scheme (e.g., pkg:golang/github.com/gin-gonic/gin@v1.9.1)", ErrInvalidPURL, purl)
 	}
 
-	remainder := strings.TrimPrefix(trimmed, "pkg:")
+	remainder := strings.TrimPrefix(purl, "pkg:")
 	remainder = strings.TrimLeft(remainder, "/")
 	if remainder == "" {
 		return fmt.Errorf("%w: %q is missing package type and name", ErrInvalidPURL, purl)
@@ -81,34 +84,38 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// NewClient initializes a new Nexus IQ API client with connection pooling and basic auth credentials
+// NewClient initializes a new Nexus IQ API client with basic auth credentials
 func NewClient(baseURL, username, password string) (*Client, error) {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
+		// a *url.Error quotes the whole URL, which may hold a password
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return nil, fmt.Errorf("invalid base URL: %w", err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return nil, fmt.Errorf("invalid base URL %q: scheme must be http or https", baseURL)
+		return nil, fmt.Errorf("invalid base URL %q: scheme must be http or https", u.Redacted())
 	}
 	if u.Host == "" {
-		return nil, fmt.Errorf("invalid base URL %q: host is required", baseURL)
+		return nil, fmt.Errorf("invalid base URL %q: host is required", u.Redacted())
+	}
+	if u.User != nil {
+		return nil, fmt.Errorf("invalid base URL %q: credentials belong in NEXUS_IQ_USERNAME and NEXUS_IQ_PASSWORD", u.Redacted())
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("invalid base URL: it must not have a query or a fragment")
 	}
 	// Normalize base URL by removing trailing slashes
 	u.Path = strings.TrimRight(u.Path, "/")
-
-	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-	}
 
 	return &Client{
 		BaseURL:  u.String(),
 		Username: username,
 		Password: password,
 		HTTPClient: &http.Client{
-			Timeout:   30 * time.Second, // Prevent hanging requests
-			Transport: transport,
+			Timeout: 30 * time.Second, // Prevent hanging requests
 		},
 	}, nil
 }
@@ -157,6 +164,9 @@ func (c *Client) DoRequest(ctx context.Context, method, endpoint string, payload
 	// Handle other non-2xx responses proactively
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("%w: api error (status %d): %s", ErrNotFound, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		}
 		return fmt.Errorf("api error (status %d): %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
 	}
 

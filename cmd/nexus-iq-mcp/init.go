@@ -62,7 +62,6 @@ func init() {
 			options.Level = slog.LevelError
 		case "off", "none", "null", "nil", "no", "n":
 			options.Level = LevelNone
-			return
 		}
 	}
 

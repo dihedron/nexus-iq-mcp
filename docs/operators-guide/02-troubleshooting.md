@@ -8,3 +8,9 @@
 
 `application not found in Nexus IQ`
 :   No application has that name, `publicId` or UUID. Check the `application_identifier` argument.
+
+`ambiguous application identifier`
+:   Several applications have that name. Use one of the `publicId` values the error lists.
+
+`invalid base URL`
+:   `NEXUS_IQ_URL` must be an `http` or `https` URL without credentials, query or fragment. Put the credentials in `NEXUS_IQ_USERNAME` and `NEXUS_IQ_PASSWORD`.

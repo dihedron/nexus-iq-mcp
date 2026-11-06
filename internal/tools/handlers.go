@@ -18,12 +18,16 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 	// Tool 1: Component Details
 	detailsTool := mcp.NewTool("get_component_details",
 		mcp.WithDescription("Retrieves metadata, security vulnerabilities, license data, and popularity for a specific dependency version."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithString("purl", mcp.Required(), mcp.Description("The Package URL of the component (e.g., pkg:golang/github.com/gin-gonic/gin@v1.9.1)")),
 	)
 
 	s.AddTool(detailsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		purl, err := request.RequireString("purl")
-		if err != nil || strings.TrimSpace(purl) == "" {
+		purl = strings.TrimSpace(purl)
+		if err != nil || purl == "" {
 			return mcp.NewToolResultError("purl argument is missing or invalid"), nil
 		}
 		if err := nexusiq.ValidatePURL(purl); err != nil {
@@ -46,12 +50,16 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 	// Tool 2: Component Versions
 	versionsTool := mcp.NewTool("get_component_versions",
 		mcp.WithDescription("Retrieves the list of all known versions for a given dependency to determine the latest available version."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithString("purl", mcp.Required(), mcp.Description("The Package URL of the component (e.g., pkg:golang/github.com/gin-gonic/gin@v1.9.1)")),
 	)
 
 	s.AddTool(versionsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		purl, err := request.RequireString("purl")
-		if err != nil || strings.TrimSpace(purl) == "" {
+		purl = strings.TrimSpace(purl)
+		if err != nil || purl == "" {
 			return mcp.NewToolResultError("purl argument is missing or invalid"), nil
 		}
 		if err := nexusiq.ValidatePURL(purl); err != nil {
@@ -74,6 +82,9 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 	// Tool 3: Component Remediation
 	remediationTool := mcp.NewTool("get_component_remediation",
 		mcp.WithDescription("Suggests the optimal upgraded version of a dependency that resolves policy violations for a specific application context."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithString("purl", mcp.Required(), mcp.Description("The Package URL of the violating component.")),
 		mcp.WithString("application_identifier", mcp.Required(), mcp.Description("The exact name, publicId, or internal UUID of the application in Nexus IQ.")),
 		mcp.WithString("stage_id", mcp.Description("The lifecycle stage (e.g., build, release, operate). Defaults to 'build'.")),
@@ -81,7 +92,8 @@ func Register(s *server.MCPServer, client *nexusiq.Client) {
 
 	s.AddTool(remediationTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		purl, err := request.RequireString("purl")
-		if err != nil || strings.TrimSpace(purl) == "" {
+		purl = strings.TrimSpace(purl)
+		if err != nil || purl == "" {
 			return mcp.NewToolResultError("purl argument is missing or invalid"), nil
 		}
 		if err := nexusiq.ValidatePURL(purl); err != nil {

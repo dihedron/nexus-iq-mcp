@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -191,5 +192,107 @@ func TestClientAndEndpoints(t *testing.T) {
 	_, err = badClient.GetComponentDetails(ctx, "pkg:golang/github.com/gin-gonic/gin@v1.9.1")
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("expected ErrUnauthorized, got: %v", err)
+	}
+}
+
+func TestValidatePURLRejectsSurroundingWhitespace(t *testing.T) {
+	for _, purl := range []string{" pkg:maven/a/b@1", "pkg:maven/a/b@1 ", "\tpkg:maven/a/b@1\n"} {
+		if err := ValidatePURL(purl); !errors.Is(err, ErrInvalidPURL) {
+			t.Errorf("expected ErrInvalidPURL for %q, got: %v", purl, err)
+		}
+	}
+}
+
+func TestNewClientRejectsUnsafeBaseURL(t *testing.T) {
+	// joined at run time: secret scanners read a literal as a real credential
+	const userInfo = "user:" + "s3cr3t" + "@"
+	for _, baseURL := range []string{
+		"http://" + userInfo + "localhost:8070",
+		"http://user@localhost:8070",
+		"http://" + userInfo + "localhost:8070/%zz",
+		"ftp://" + userInfo + "localhost:8070",
+		"http://localhost:8070/iq?token=s3cr3t",
+		"http://localhost:8070/iq#s3cr3t",
+	} {
+		_, err := NewClient(baseURL, "admin", "secret")
+		if err == nil {
+			t.Errorf("expected an error for %q", baseURL)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cr3t") {
+			t.Errorf("error for %q leaks the secret: %v", baseURL, err)
+		}
+	}
+	if _, err := NewClient("https://localhost:8070/iq/", "admin", "secret"); err != nil {
+		t.Errorf("expected a valid base URL, got: %v", err)
+	}
+}
+
+func TestResolveApplicationID(t *testing.T) {
+	const listing = `{"applications":[
+		{"id":"A1","publicId":"svc-eu","name":"svc"},
+		{"id":"A2","publicId":"svc-us","name":"svc"},
+		{"id":"A3","publicId":"svc","name":"other"},
+		{"id":"A4","publicId":"solo-id","name":"solo"}]}`
+
+	tests := []struct {
+		name         string
+		lookupStatus int // status of the publicId lookup
+		listStatus   int // status of the full listing
+		identifier   string
+		wantID       string
+		wantErr      error
+		wantNotErr   error
+	}{
+		{name: "404 falls through to the name", lookupStatus: 404, listStatus: 200, identifier: "solo", wantID: "A4"},
+		{name: "404 and no match", lookupStatus: 404, listStatus: 200, identifier: "nothing", wantErr: ErrApplicationNotFound},
+		{name: "500 is not a missing application", lookupStatus: 500, listStatus: 200, identifier: "nothing", wantNotErr: ErrApplicationNotFound},
+		{name: "500 does not resolve through the name", lookupStatus: 500, listStatus: 200, identifier: "solo", wantNotErr: ErrApplicationNotFound},
+		{name: "403 is reported", lookupStatus: 403, listStatus: 200, identifier: "solo", wantNotErr: ErrApplicationNotFound},
+		{name: "401 is reported", lookupStatus: 401, listStatus: 200, identifier: "solo", wantErr: ErrUnauthorized},
+		{name: "listing failure is reported", lookupStatus: 404, listStatus: 500, identifier: "solo", wantNotErr: ErrApplicationNotFound},
+		{name: "duplicate names are ambiguous", lookupStatus: 404, listStatus: 200, identifier: "dup", wantErr: ErrAmbiguousApplication},
+		{name: "a publicId beats a name", lookupStatus: 404, listStatus: 200, identifier: "svc", wantID: "A3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("publicId") != "" {
+					w.WriteHeader(tt.lookupStatus)
+					return
+				}
+				w.WriteHeader(tt.listStatus)
+				body := listing
+				if tt.identifier == "dup" {
+					body = strings.ReplaceAll(listing, `"name":"svc"`, `"name":"dup"`)
+				}
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
+			client, err := NewClient(srv.URL, "admin", "secret")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			id, err := client.ResolveApplicationID(context.Background(), tt.identifier)
+			if tt.wantID != "" {
+				if err != nil || id != tt.wantID {
+					t.Fatalf("got %q, %v; want %q", id, err, tt.wantID)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("got %q, want an error", id)
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Errorf("got %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantNotErr != nil && errors.Is(err, tt.wantNotErr) {
+				t.Errorf("got %v, must not be %v", err, tt.wantNotErr)
+			}
+			if tt.wantErr == ErrAmbiguousApplication && (!strings.Contains(err.Error(), "svc-eu") || !strings.Contains(err.Error(), "svc-us")) {
+				t.Errorf("error does not list the candidates: %v", err)
+			}
+		})
 	}
 }
