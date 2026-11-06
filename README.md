@@ -54,6 +54,43 @@ The server requires the following environment variables:
 
 - **[GO-2026-6911](https://pkg.go.dev/vuln/GO-2026-6911)** (`github.com/mark3labs/mcp-go`, no fix available): the Streamable HTTP client in `client/transport` follows redirects and sends its credentials to the new host. This server uses only the `mcp` and `server` packages, so the vulnerable package is not in the binary. Remove this note when the advisory is fixed.
 
+## Verifying a Release
+
+Releases are signed with the project's packaging key, [packaging/signing-key.asc](packaging/signing-key.asc), fingerprint `FB7DE97BAAFAA2A676CEE59A1B34E6A2A14CD06A`. Get the key from this repository, not from the release you are verifying.
+
+- **The checksums file** covers every archive, package and SBOM of the release, and its signature (`.asc`) covers it:
+
+  ```bash
+  gpg --import signing-key.asc
+  gpg --verify checksums.txt.asc checksums.txt
+  sha256sum --check --ignore-missing checksums.txt
+  ```
+
+- **rpm packages** carry their own signature, which `rpm` and `dnf` check once the key is imported:
+
+  ```bash
+  sudo rpm --import signing-key.asc
+  rpm --checksig RPM_FILE   # must report "digests signatures OK"
+  ```
+
+- **deb packages** carry a `debsig` origin signature. `apt` and `dpkg` do not check it on a standalone package, so verify it with `debsig-verify`, after installing its policy for the key:
+
+  ```bash
+  sudo apt-get install debsig-verify
+  sudo mkdir -p /usr/share/debsig/keyrings/1B34E6A2A14CD06A /etc/debsig/policies/1B34E6A2A14CD06A
+  gpg --dearmor < signing-key.asc | sudo tee /usr/share/debsig/keyrings/1B34E6A2A14CD06A/debsig.gpg > /dev/null
+  sudo tee /etc/debsig/policies/1B34E6A2A14CD06A/nexus-iq-mcp.pol > /dev/null <<'POLICY'
+  <?xml version="1.0"?>
+  <!DOCTYPE Policy SYSTEM "https://www.debian.org/debsig/1.0/policy.dtd">
+  <Policy xmlns="https://www.debian.org/debsig/1.0/">
+    <Origin Name="nexus-iq-mcp" id="1B34E6A2A14CD06A" Description="nexus-iq-mcp packages"/>
+    <Selection><Required Type="origin" File="debsig.gpg" id="1B34E6A2A14CD06A"/></Selection>
+    <Verification MinOptional="0"><Required Type="origin" File="debsig.gpg" id="1B34E6A2A14CD06A"/></Verification>
+  </Policy>
+  POLICY
+  debsig-verify DEB_FILE
+  ```
+
 ## Client Configuration & Installation
 
 Always use **absolute paths** to your Go project or compiled binary when configuring MCP clients.

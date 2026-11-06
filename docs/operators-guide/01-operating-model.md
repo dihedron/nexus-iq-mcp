@@ -5,7 +5,7 @@ The MCP client starts and stops `nexus-iq-mcp serve`, one process per client ses
 Standard output carries the MCP protocol. Logs go to standard error, or to a file:
 
 | Variable | Values |
-| :--- | :--- |
+| :--------------------- | :--------------------------------------------- |
 | `NEXUS_IQ_MCP_LOG_LEVEL` | `debug`, `info`, `warn`, `error`, `off` (default: no logs) |
 | `NEXUS_IQ_MCP_LOG_STREAM` | `stderr` (default), `file` |
 
