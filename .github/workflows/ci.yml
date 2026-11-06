@@ -1,0 +1,149 @@
+name: CI
+
+# One workflow, three parallel jobs: the build (gofmt, go vet, golangci-lint
+# with gosec and compile through "make"; the tests with coverage; then the
+# SonarQube Cloud analysis of the same checkout and coverage), the secret
+# scans, and, on pull requests, the dependency review.
+# CodeQL, the documents and releases keep workflows of their own (other
+# triggers and permissions).
+#
+# Branch pushes run the build and the scans; their checks show on a pull
+# request for the same commit, so pull requests only add the dependency
+# review. The daily schedule re-runs the secret scans with current rules.
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+# a newer push to the same branch cancels the run it supersedes, except on
+# main, where every commit keeps its run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    name: Build and test
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Codecov upload via OIDC, no CODECOV_TOKEN secret
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # git describe stamps the version; Sonar blames new code
+
+      - name: Set up Go compiler
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          install-only: true
+
+      - name: Install golangci-lint (make lint, before every build)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14
+          install-only: true
+
+      - name: Lint and build
+        run: make
+
+      - name: Test with coverage
+        # -coverpkg credits code with the coverage of every package's tests,
+        # not only its own
+        run: go test -count=1 ./... -coverpkg=./... -coverprofile=coverage.txt
+      - name: Merge coverage blocks
+        # with -coverpkg every test binary reports every block, most with 0;
+        # SonarCloud does not merge them, so keep the highest count of each
+        run: |
+          awk 'NR == 1 { print; next } { k = $1 " " $2; if (!(k in c)) o[++n] = k; if (!(k in c) || $3 > c[k]) c[k] = $3 }
+            END { for (i = 1; i <= n; i++) print o[i], c[o[i]] }' coverage.txt > coverage.merged
+          mv coverage.merged coverage.txt
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+
+      # skipped where the secret is not available (Dependabot, forks)
+      - name: Check for the SonarQube token
+        id: sonar
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: echo "enabled=${SONAR_TOKEN:+yes}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache SonarQube packages
+        if: steps.sonar.outputs.enabled == 'yes'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      # settings and coverage report in sonar-project.properties
+      - name: Analyse with SonarQube Cloud
+        if: steps.sonar.outputs.enabled == 'yes'
+        uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  secrets:
+    name: Secret scans
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # both scanners read the whole history
+
+      # with the repository's .gitleaks.toml (if present); "make scanners"
+      # compares these pinned versions with the latest releases, which
+      # "make secrets" runs: bump the pins when they fall behind
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
+
+      # reports only secrets it can verify as live, or cannot rule out
+      - name: TruffleHog
+        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb # v3.99.8
+        with:
+          base: ""
+          head: ${{ github.ref_name }}
+          extra_args: --results=verified,unknown
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
