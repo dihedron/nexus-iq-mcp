@@ -1,0 +1,5 @@
+# Setup Guide: title page and PDF metadata (see docs/build.sh)
+title: "Setup Guide"
+subtitle: "Installing and configuring nexus-iq-mcp"
+author: "nexus-iq-mcp"
+lang: en-GB

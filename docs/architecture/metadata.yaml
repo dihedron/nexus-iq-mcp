@@ -1,0 +1,5 @@
+# Architecture and Design Guide: title page and PDF metadata (see docs/build.sh)
+title: "Architecture and Design Guide"
+subtitle: "How nexus-iq-mcp is built, and why"
+author: "nexus-iq-mcp"
+lang: en-GB

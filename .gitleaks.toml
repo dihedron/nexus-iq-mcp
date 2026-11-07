@@ -1,0 +1,11 @@
+# Gitleaks configuration: the default rules, with one allowlist for build
+# output, which git ignores and "make secrets" still sees when it scans the
+# working tree.
+title = "nexus-iq-mcp"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "git-ignored build output"
+paths = ['''(^|/)dist/''', '''(^|/)build/''']
